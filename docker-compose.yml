@@ -1,0 +1,19 @@
+services:
+  modl:
+    build: .
+    container_name: modl-selfhost
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - modl_data:/app/data
+    environment:
+      MODL_DOMAIN: localhost
+      MODL_SINGLE_TENANT: "true"
+      MODL_BOOTSTRAP_SERVER_NAME: "My Minecraft Server"
+      MODL_BOOTSTRAP_DOMAIN: "localhost"
+      MODL_BOOTSTRAP_ADMIN_EMAIL: "admin@example.com"
+      SESSION_COOKIE_SECURE: "false"
+
+volumes:
+  modl_data:
