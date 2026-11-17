@@ -3,6 +3,8 @@ upstream/
 *.db-shm
 *.db-wal
 *.exe
-dist/
+/dist/
 panel-dist/
 .env
+data/
+storage/
