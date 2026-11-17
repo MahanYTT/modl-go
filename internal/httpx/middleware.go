@@ -56,7 +56,7 @@ func CORSMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if origin != "" && isOriginAllowed(cfg, origin) {
+			if origin != "" && isOriginAllowed(cfg, r, origin) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -72,12 +72,31 @@ func CORSMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 	}
 }
 
-func isOriginAllowed(cfg *config.Config, origin string) bool {
+func resolveRequestHost(cfg *config.Config, r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if cfg.TrustProxyHeaders {
+		if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+			first, _, _ := strings.Cut(fh, ",")
+			if h := NormalizeServerDomain(first); h != "" {
+				return h
+			}
+		}
+	}
+	return NormalizeServerDomain(r.Host)
+}
+
+func isOriginAllowed(cfg *config.Config, r *http.Request, origin string) bool {
 	host := ExtractOriginHost(origin)
 	if host == "" {
 		return false
 	}
-	if IsDevLocalhost(host) {
+	requestHost := resolveRequestHost(cfg, r)
+	if requestHost != "" && host == requestHost {
+		return true
+	}
+	if IsDevLocalhost(host) && (cfg.DevelopmentMode || IsDevLocalhost(requestHost)) {
 		return true
 	}
 	for _, sys := range cfg.CORSSystemOrigins {
@@ -91,8 +110,13 @@ func isOriginAllowed(cfg *config.Config, origin string) bool {
 			return true
 		}
 	}
-	// In single-tenant or self-hosted custom domain deployments, allow same-host/custom domains validated by ServerHeaderMiddleware.
-	return true
+	for _, domain := range []string{cfg.ModlDomain, cfg.BootstrapDomain} {
+		d := NormalizeServerDomain(domain)
+		if d != "" && (host == d || strings.HasSuffix(host, "."+d)) {
+			return true
+		}
+	}
+	return false
 }
 
 func ServerHeaderMiddleware(cfg *config.Config, servers models.ServerResolver) func(http.Handler) http.Handler {
@@ -233,7 +257,7 @@ func OriginCSRFMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 			}
 			origin := r.Header.Get("Origin")
 			if origin != "" {
-				if isOriginAllowed(cfg, origin) {
+				if isOriginAllowed(cfg, r, origin) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -241,7 +265,7 @@ func OriginCSRFMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 				return
 			}
 			if referer := r.Header.Get("Referer"); referer != "" {
-				if ExtractOriginHost(referer) != "" {
+				if isOriginAllowed(cfg, r, referer) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -261,9 +285,13 @@ func RequirePanelPolicy(perms models.PermissionChecker, policy models.AccessPoli
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			srv := GetServer(r)
+			if srv == nil {
+				WriteError(w, r, http.StatusNotFound, "Server not found")
+				return
+			}
 			email := GetSessionEmail(r)
-			if srv == nil || email == "" {
-				WriteError(w, r, http.StatusForbidden, "Insufficient permissions")
+			if email == "" {
+				WriteErrorCode(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "Authentication required")
 				return
 			}
 			if perms.IsSuperAdmin(srv, email) {

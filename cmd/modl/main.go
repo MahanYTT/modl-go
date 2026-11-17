@@ -103,6 +103,8 @@ func buildServerHandler(cfg *config.Config) (http.Handler, func(), error) {
 
 	root := chi.NewRouter()
 	root.Use(middleware.Recoverer)
+	root.Use(httpx.SecurityHeaders(cfg))
+	root.Use(httpx.ClientIPMiddleware(cfg))
 	root.Use(httpx.CORSMiddleware(cfg))
 
 	// Serve API at both /v1|/v2|/v3 (Minecraft plugin & direct API) and /api/v1|/api/v2|/api/v3 (panel SPA default)
@@ -182,7 +184,6 @@ func buildAPIRouter(
 	hub *realtime.Hub,
 ) http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP)
 	r.Use(httpx.OriginCSRFMiddleware(cfg))
 
 	// Health & Realtime WebSocket
